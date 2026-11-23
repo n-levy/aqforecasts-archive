@@ -1,0 +1,8 @@
+__pycache__/
+*.pyc
+work/
+.DS_Store
+*.nc
+*.zip
+*.parquet
+.env

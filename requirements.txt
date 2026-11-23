@@ -1,0 +1,7 @@
+numpy
+pandas
+pyarrow
+xarray
+netCDF4
+cdsapi
+boto3

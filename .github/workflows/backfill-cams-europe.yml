@@ -1,0 +1,57 @@
+# Stage 2 backfill of the CAMS European air-quality forecast at stations.
+# Runs in chunks of up to 5 hours; days already in the bucket are skipped, so each
+# run continues where the last stopped.  No new ADS request starts between 06:15
+# and 13:45 UTC (the evaluation's daily lock uses the same ADS account then).
+# Scheduled runs use the range in the repository variables CAMS_EUROPE_FROM and
+# CAMS_EUROPE_TO; a manual run can give its own range.
+name: Backfill CAMS Europe
+
+on:
+  workflow_dispatch:
+    inputs:
+      from:
+        description: "First issue day YYYY-MM-DD (empty = variable CAMS_EUROPE_FROM)"
+        required: false
+        default: ""
+      to:
+        description: "Last issue day YYYY-MM-DD (empty = variable CAMS_EUROPE_TO)"
+        required: false
+        default: ""
+      hours:
+        description: "Stop starting new days after this many hours"
+        required: false
+        default: "5"
+  schedule:
+    - cron: "0 14,20 * * *"
+    - cron: "0 1 * * *"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cams-europe
+  cancel-in-progress: false
+
+jobs:
+  backfill:
+    if: ${{ github.event_name != 'schedule' || vars.CAMS_EUROPE_FROM != '' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 340
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - run: pip install -r requirements.txt
+      - name: Backfill
+        env:
+          ADS_API_URL: ${{ secrets.ADS_API_URL }}
+          ADS_API_KEY: ${{ secrets.ADS_API_KEY }}
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_ARCHIVE_BUCKET: ${{ vars.R2_ARCHIVE_BUCKET }}
+          FROM: ${{ inputs.from || vars.CAMS_EUROPE_FROM }}
+          TO: ${{ inputs.to || vars.CAMS_EUROPE_TO }}
+          HOURS: ${{ inputs.hours || '5' }}
+        run: python -m arch.cams_europe --from "$FROM" --to "$TO" --hours "$HOURS"
