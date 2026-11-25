@@ -154,6 +154,7 @@ def process_day(client, s3, bucket: str, day: dt.date, stations: pd.DataFrame, w
 # The evaluation's daily lock uses the same ADS account between 07:07 and 13:37 UTC.
 # No new backfill request starts in that window, so the lock never waits behind one.
 QUIET_UTC = (dt.time(6, 15), dt.time(13, 45))
+MAX_CONSECUTIVE_FAILURES = 3    # e.g. a wrong key: stop instead of failing every remaining day
 
 
 def in_quiet_window(now: dt.datetime) -> bool:
@@ -190,6 +191,12 @@ def main(argv=None) -> int:
         print(json.dumps(r), flush=True)
         report.append(r)
         day += dt.timedelta(days=1)
+        if len(report) >= MAX_CONSECUTIVE_FAILURES and all(
+                x["status"] == "failed" for x in report[-MAX_CONSECUTIVE_FAILURES:]):
+            print(json.dumps({"stopped": f"{MAX_CONSECUTIVE_FAILURES} consecutive failures; "
+                                         "check the ADS key and licence before the next run"}))
+            day -= dt.timedelta(days=1)
+            break
     done = sum(r["status"] == "done" for r in report)
     print(json.dumps({"from": a.start, "to": a.end, "days_tried": len(report), "done": done,
                       "already": sum(r["status"] == "already done" for r in report), "failed": failures,
