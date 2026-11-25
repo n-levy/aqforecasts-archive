@@ -155,6 +155,7 @@ def process_day(client, s3, bucket: str, day: dt.date, stations: pd.DataFrame, w
     work.mkdir(parents=True, exist_ok=True)
     zpath = work / f"{SOURCE}_{day}.zip"
     t0 = time.time()
+    print(json.dumps({"requesting": str(day), "utc": dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds")}), flush=True)
     client.retrieve(DATASET, build_request(day), str(zpath))
     retrieved = dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds")
     ds = open_zip(zpath, work / f"nc_{day}")
