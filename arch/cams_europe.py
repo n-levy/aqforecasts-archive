@@ -177,6 +177,12 @@ def main(argv=None) -> int:
     start, end = dt.date.fromisoformat(a.start), dt.date.fromisoformat(a.end)
     s3, bucket = store.client(), os.environ["R2_ARCHIVE_BUCKET"]
     client, stations = ads_client(), load_stations()
+    now = dt.datetime.now(dt.timezone.utc)
+    if in_quiet_window(now):
+        # started inside the evaluation's lock window: wait for its end instead of exiting
+        wait = (dt.datetime.combine(now.date(), QUIET_UTC[1], tzinfo=dt.timezone.utc) - now).total_seconds()
+        print(json.dumps({"waiting_seconds": round(wait), "until_utc": str(QUIET_UTC[1])}), flush=True)
+        time.sleep(wait + 5)
     t0, report, failures = time.time(), [], 0
     day = start
     while day <= end and time.time() - t0 < a.hours * 3600:
