@@ -86,6 +86,8 @@ class PaperRaw(unittest.TestCase):
             nb = paper_spatial.build_grid_neighborhood(la, lo, lat, lon, 40.0)
             self.assertTrue(nb.lat_idx.size > 20)                           # about 50 cells within 40 km
             self.assertEqual(got[i], paper_spatial.summarize_grid_values(field, nb, 20.0)[0])
+            stats = cams_europe.raw40_stats(field, cams_europe.paper_neighbourhoods(lat, lon, st))[i]
+            self.assertEqual(tuple(stats), paper_spatial.summarize_grid_values(field, nb, 20.0))
             self.assertTrue(np.all(nb.distances_km <= 40.0))
 
 

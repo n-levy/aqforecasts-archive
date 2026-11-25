@@ -60,11 +60,17 @@ def paper_neighbourhoods(grid_lat, grid_lon, stations: pd.DataFrame) -> list:
     return _NEIGHBOURHOODS[key]
 
 
+def raw40_stats(field: np.ndarray, neighbourhoods: list) -> np.ndarray:
+    """(weighted mean, max, weighted std) per station: the paper's raw_mean, raw_max, raw_std."""
+    return np.array([paper_spatial.summarize_grid_values(field, nb, RAW_LAMBDA_KM) for nb in neighbourhoods],
+                    dtype=float).reshape(-1, 3)
+
+
 def raw40_means(field: np.ndarray, neighbourhoods: list) -> np.ndarray:
-    return np.array([paper_spatial.summarize_grid_values(field, nb, RAW_LAMBDA_KM)[0] for nb in neighbourhoods])
+    return raw40_stats(field, neighbourhoods)[:, 0]
 STATIONS = Path(__file__).resolve().parents[1] / "data" / "stations_v1.csv"
 COLUMNS = ["station_key", "source", "variable", "unit", "issue_time_utc", "valid_time_utc", "lead_hour",
-           "value", "mean_3x3", "max_3x3", "raw40_mean", "extraction", "grid_res_deg", "vintage", "retrieved_utc",
+           "value", "mean_3x3", "max_3x3", "raw40_mean", "raw40_max", "raw40_std", "extraction", "grid_res_deg", "vintage", "retrieved_utc",
            "source_version", "schema_version"]
 
 
@@ -107,16 +113,18 @@ def extract(ds, stations: pd.DataFrame, day: dt.date, retrieved_utc: str) -> pd.
         for i, lead in enumerate(leads):
             field = arr[i]
             mean, mx = idx.neighbourhood(field)
+            r40 = raw40_stats(field, nbs)
             parts.append(pd.DataFrame({
                 "station_key": stations["station_key"].values, "variable": name, "unit": unit,
                 "lead_hour": int(lead), "value": idx.bilinear(field).astype("float32"),
                 "mean_3x3": mean.astype("float32"), "max_3x3": mx.astype("float32"),
-                "raw40_mean": raw40_means(field, nbs).astype("float32")}))
+                "raw40_mean": r40[:, 0].astype("float32"), "raw40_max": r40[:, 1].astype("float32"),
+                "raw40_std": r40[:, 2].astype("float32")}))
     out = pd.concat(parts, ignore_index=True)
     out = out[np.isfinite(out["value"])]
     out["valid_time_utc"] = issue + pd.to_timedelta(out["lead_hour"], unit="h")
     out = out.assign(source=SOURCE, issue_time_utc=issue,
-                     extraction="value: bilinear; mean/max_3x3: 3x3 around nearest; raw40_mean: paper 40 km exp(-d/20 km)",
+                     extraction="value: bilinear; mean/max_3x3: 3x3 around nearest; raw40_mean/max/std: paper 40 km exp(-d/20 km)",
                      grid_res_deg=0.1, vintage="archived", retrieved_utc=retrieved_utc,
                      source_version=ds.attrs.get("source", ""), schema_version=SCHEMA_VERSION)
     return out[COLUMNS].sort_values(["variable", "lead_hour", "station_key"], kind="mergesort").reset_index(drop=True)
