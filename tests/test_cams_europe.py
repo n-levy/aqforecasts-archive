@@ -62,7 +62,7 @@ class Extract(unittest.TestCase):
         self.assertEqual(set(out["variable"]), {"o3", "no2"})
         row = out[(out["variable"] == "no2") & (out["lead_hour"] == 16)].iloc[0]
         self.assertEqual(row["valid_time_utc"], pd.Timestamp("2024-01-01T16:00Z"))
-        self.assertEqual((row["value"], row["mean_3x3"], row["max_3x3"]), (14.0, 14.0, 14.0))
+        self.assertEqual((row["value"], row["mean_3x3"], row["max_3x3"], row["raw40_mean"]), (14.0, 14.0, 14.0, 14.0))
 
     def test_request_and_keys(self):
         r = cams_europe.build_request(dt.date(2024, 1, 1))
@@ -72,6 +72,21 @@ class Extract(unittest.TestCase):
         self.assertEqual(len(r["leadtime_hour"]), 35)
         self.assertEqual(cams_europe.keys(dt.date(2024, 1, 1))[1],
                          "manifests/cams_europe/2024/01/manifest_cams_europe_2024-01-01.json")
+
+
+class PaperRaw(unittest.TestCase):
+    def test_raw40_equals_the_papers_code_on_a_varying_field(self):
+        from arch import paper_spatial
+        lat, lon = cams_grid()
+        rng = np.random.default_rng(0)
+        field = rng.normal(size=(len(lat), len(lon)))
+        st = pd.DataFrame({"station_key": ["EEA:A", "EEA:B"], "latitude": [48.2, 59.9], "longitude": [16.37, -2.0]})
+        got = cams_europe.raw40_means(field, cams_europe.paper_neighbourhoods(lat, lon, st))
+        for i, (la, lo) in enumerate(zip(st["latitude"], st["longitude"])):
+            nb = paper_spatial.build_grid_neighborhood(la, lo, lat, lon, 40.0)
+            self.assertTrue(nb.lat_idx.size > 20)                           # about 50 cells within 40 km
+            self.assertEqual(got[i], paper_spatial.summarize_grid_values(field, nb, 20.0)[0])
+            self.assertTrue(np.all(nb.distances_km <= 40.0))
 
 
 class Quiet(unittest.TestCase):
