@@ -35,7 +35,7 @@ from . import paper_spatial
 
 SOURCE = "cams_europe"
 DATASET = "cams-europe-air-quality-forecasts"
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2   # 2: lead hours decoded from ADS float hours (v1 stored every lead as 0)
 VARIABLES = {  # ADS request name -> NetCDF variable -> stored name
     "carbon_monoxide": ("co_conc", "co"),
     "nitrogen_dioxide": ("no2_conc", "no2"),
@@ -96,12 +96,31 @@ def load_stations(path: Path = STATIONS) -> pd.DataFrame:
     return pd.read_csv(path, dtype={"station_key": str})
 
 
+def lead_hours(t) -> np.ndarray:
+    """Lead hours of the dataset's time axis.
+
+    ADS NetCDF stores `time` as float hours with units "hours" (long_name "FORECAST time from YYYYMMDD"),
+    which xarray leaves undecoded; tests and other writers may give timedelta64.
+    """
+    v = np.asarray(t.values)
+    if np.issubdtype(v.dtype, np.timedelta64):
+        h = v / np.timedelta64(1, "h")
+    elif str(t.attrs.get("units", "")).strip().lower() in ("hours", "hour", "h"):
+        h = v.astype("float64")
+    else:
+        raise ValueError(f"time axis neither timedelta nor hours: dtype {v.dtype}, units {t.attrs.get('units')!r}")
+    leads = np.round(h).astype(int)
+    if len(set(leads)) != len(leads) or not set(leads) <= set(LEADS):
+        raise ValueError(f"unexpected lead hours {sorted(leads)}")
+    return leads
+
+
 def extract(ds, stations: pd.DataFrame, day: dt.date, retrieved_utc: str) -> pd.DataFrame:
     """Station values from one day's dataset (dims time=lead, level, latitude, longitude)."""
     idx = grid.StationIndex(ds["latitude"].values, ds["longitude"].values,
                             stations["latitude"].astype(float).values, stations["longitude"].astype(float).values)
     nbs = paper_neighbourhoods(ds["latitude"].values, ds["longitude"].values, stations)
-    leads = (pd.to_timedelta(ds["time"].values) / pd.Timedelta(hours=1)).round().astype(int)
+    leads = lead_hours(ds["time"])
     issue = pd.Timestamp(day, tz="UTC")
     parts = []
     for _, (nc_name, name) in VARIABLES.items():
@@ -150,9 +169,12 @@ def sha256(path: Path) -> str:
 
 def process_day(client, s3, bucket: str, day: dt.date, stations: pd.DataFrame, work: Path) -> dict:
     data_key, man_key = keys(day)
-    if store.exists(s3, bucket, man_key):
-        return {"day": str(day), "status": "already done"}
     work.mkdir(parents=True, exist_ok=True)
+    if store.exists(s3, bucket, man_key):
+        old = json.loads(store.get(s3, bucket, man_key, work / "old_manifest.json").read_text())
+        (work / "old_manifest.json").unlink()
+        if old.get("schema_version", 0) >= SCHEMA_VERSION:
+            return {"day": str(day), "status": "already done"}
     zpath = work / f"{SOURCE}_{day}.zip"
     t0 = time.time()
     print(json.dumps({"requesting": str(day), "utc": dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds")}), flush=True)
@@ -160,6 +182,8 @@ def process_day(client, s3, bucket: str, day: dt.date, stations: pd.DataFrame, w
     retrieved = dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds")
     ds = open_zip(zpath, work / f"nc_{day}")
     table = extract(ds, stations, day, retrieved)
+    if sorted(table["lead_hour"].unique()) != LEADS:
+        raise ValueError(f"{day}: leads {sorted(table['lead_hour'].unique())} != requested {LEADS}")
     ds.close()
     ppath = work / f"{SOURCE}_{day}.parquet"
     table.to_parquet(ppath, index=False, compression="zstd")
@@ -172,7 +196,7 @@ def process_day(client, s3, bucket: str, day: dt.date, stations: pd.DataFrame, w
     mpath = work / f"manifest_{SOURCE}_{day}.json"
     mpath.write_text(json.dumps(manifest, indent=1) + "\n")
     store.put(s3, bucket, data_key, ppath, overwrite=True)      # a half-written day has no manifest yet
-    store.put(s3, bucket, man_key, mpath)
+    store.put(s3, bucket, man_key, mpath, overwrite=True)
     for p in (zpath, ppath, mpath):
         p.unlink(missing_ok=True)
     for p in sorted((work / f"nc_{day}").glob("*")):

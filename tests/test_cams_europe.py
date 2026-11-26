@@ -64,6 +64,18 @@ class Extract(unittest.TestCase):
         self.assertEqual(row["valid_time_utc"], pd.Timestamp("2024-01-01T16:00Z"))
         self.assertEqual((row["value"], row["mean_3x3"], row["max_3x3"], row["raw40_mean"]), (14.0, 14.0, 14.0, 14.0))
 
+    def test_lead_hours_from_ads_float_hours(self):
+        import xarray as xr
+
+        # ADS NetCDF: time is float32 hours, units "hours", not decoded by xarray
+        t = xr.DataArray(np.array([0, 3, 16, 40, 96], dtype="float32"), dims="time",
+                         attrs={"long_name": "FORECAST time from 20251001", "units": "hours"})
+        self.assertEqual(list(cams_europe.lead_hours(t)), [0, 3, 16, 40, 96])
+        with self.assertRaises(ValueError):
+            cams_europe.lead_hours(xr.DataArray(np.array([0.0, 3.0]), dims="time", attrs={"units": "days"}))
+        with self.assertRaises(ValueError):
+            cams_europe.lead_hours(xr.DataArray(np.array([0.0, 0.0]), dims="time", attrs={"units": "hours"}))
+
     def test_request_and_keys(self):
         r = cams_europe.build_request(dt.date(2024, 1, 1))
         self.assertEqual(r["date"], ["2024-01-01/2024-01-01"])
